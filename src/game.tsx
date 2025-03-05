@@ -105,7 +105,6 @@ export default function Game() {
 
     await Assets.loadBundle("fonts");
 
-    // textures
     const shipTexture: Texture = await Assets.load("/images/ship.png");
     const shipSprite = new Sprite(shipTexture);
 
@@ -130,14 +129,11 @@ export default function Game() {
       const h = Math.floor(Math.random() * 10);
       const w = Math.floor(Math.random() * 2);
 
-      const star = new Graphics()
-        //.star(0, 0, 5, 8, 5)
-        .rect(0, 0, w, h)
-        .fill({
-          r: 255,
-          g: 255,
-          b: 255,
-        });
+      const star = new Graphics().rect(0, 0, w, h).fill({
+        r: 255,
+        g: 255,
+        b: 255,
+      });
 
       star.x = Math.random() * app.screen.width;
       star.y = Math.random() * app.screen.height;
@@ -172,8 +168,6 @@ export default function Game() {
       volume: 0.1,
     });
 
-    //#region game start
-
     let isGamePaused = false;
     let isGameStarted = false;
     let gameStartedTimestamp;
@@ -200,10 +194,6 @@ export default function Game() {
     gameStartContainer.addChild(gameStartText);
 
     app.stage.addChild(gameStartContainer);
-
-    //#endregion
-
-    //#region game over
 
     let isGameOver = false;
     let gameOverContainer: Container;
@@ -274,8 +264,6 @@ export default function Game() {
     gameOverContainer.zIndex = 100;
     app.stage.addChild(gameOverContainer);
 
-    //#endregion
-
     const shipY = app.screen.height - shipSprite.height / 2;
 
     shipSprite.anchor.set(0.5);
@@ -333,6 +321,15 @@ export default function Game() {
       gameStartedTimestamp = Date.now();
       app.stage.addChild(heartContainer);
       app.stage.addChild(scoreText);
+      setupComboSystem();
+
+      setTimeout(() => {
+        if (!isGameOver) spawnBoss();
+      }, 60000);
+
+      setTimeout(() => {
+        if (!isGameOver) spawnBoss();
+      }, 180000);
     }
 
     let benefits: any[] = [];
@@ -358,6 +355,7 @@ export default function Game() {
     function spawnBenefit() {
       const benefit: any = new Sprite(coinTexture);
       const xPos = Math.random() * app.screen.width;
+
       benefit.anchor.set(0.5);
       const size = generateSize(
         GAME_CONFIG.BENEFIT.MIN_SIZE,
@@ -375,11 +373,43 @@ export default function Game() {
         GAME_CONFIG.BENEFIT.MIN_X_SPEED,
         GAME_CONFIG.BENEFIT.MAX_X_SPEED
       );
+      benefit.type = "coin";
+
+      if (Math.random() < 0.2) {
+        const powerUpTypes = ["shield", "rapidFire", "bomb", "extraLife"];
+        benefit.type =
+          powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
+
+        switch (benefit.type) {
+          case "shield":
+            benefit.filters = [
+              new GlowFilter({ color: 0x00ffff, distance: 15, quality: 0.5 }),
+            ];
+            benefit.tint = 0x00ffff;
+            break;
+          case "rapidFire":
+            benefit.filters = [
+              new GlowFilter({ color: 0xff0000, distance: 15, quality: 0.5 }),
+            ];
+            benefit.tint = 0xff0000;
+            break;
+          case "bomb":
+            benefit.filters = [
+              new GlowFilter({ color: 0xff00ff, distance: 15, quality: 0.5 }),
+            ];
+            benefit.tint = 0xff00ff;
+            break;
+          case "extraLife":
+            benefit.filters = [
+              new GlowFilter({ color: 0x00ff00, distance: 15, quality: 0.5 }),
+            ];
+            benefit.tint = 0x00ff00;
+            break;
+        }
+      }
 
       app.stage.addChild(benefit);
-
       benefits.push(benefit);
-
       return benefit;
     }
 
@@ -515,6 +545,27 @@ export default function Game() {
       for (let i = 0; i < enemies.length; i++) {
         const enemy = enemies[i];
 
+        if (
+          !enemy.isBossProjectile &&
+          !isGodmode &&
+          !activeShield &&
+          shipSprite.x >= enemy.x - enemy.width / 2 &&
+          shipSprite.x <= enemy.x + enemy.width / 2 &&
+          shipSprite.y >= enemy.y - enemy.height / 2 &&
+          shipSprite.y <= enemy.y + enemy.height / 2
+        ) {
+          createExplosion(enemy.x, enemy.y);
+          app.stage.removeChild(enemy);
+          enemies.splice(i, 1);
+
+          decreaseHealth(1);
+          screenShakeIntensity = 15;
+          screenShakeDecay = 0.9;
+          screenShakeActive = true;
+
+          continue;
+        }
+
         for (let j = 0; j < bullets.length; j++) {
           const bullet = bullets[j];
 
@@ -526,12 +577,26 @@ export default function Game() {
           ) {
             createExplosion(enemy.x, enemy.y);
             app.stage.removeChild(bullet);
+
+            if (enemy === bossSprite) {
+              damageBoss(1);
+              bullets.splice(bullets.indexOf(bullet), 1);
+              continue;
+            }
+
             app.stage.removeChild(enemy);
 
-            addScore(GAME_CONFIG.ENEMY.POINT, true);
+            const comboBonus = incrementCombo();
+            addScore(GAME_CONFIG.ENEMY.POINT * comboBonus, comboBonus > 1);
+
+            createParticles(enemy.x, enemy.y, 0xffff00, 15);
 
             bullets.splice(bullets.indexOf(bullet), 1);
             enemies.splice(enemies.indexOf(enemy), 1);
+
+            screenShakeIntensity = 3;
+            screenShakeDecay = 0.8;
+            screenShakeActive = true;
           }
         }
       }
@@ -864,9 +929,26 @@ export default function Game() {
             volume: 0.1,
           });
           app.stage.removeChild(benefit);
-          benefits.splice(i, 1);
 
-          addScore(GAME_CONFIG.BENEFIT.POINT);
+          switch (benefit.type) {
+            case "shield":
+              createShield();
+              break;
+            case "rapidFire":
+              activateRapidFire();
+              break;
+            case "bomb":
+              activateBomb();
+              break;
+            case "extraLife":
+              addExtraLife();
+              break;
+            default:
+              addScore(GAME_CONFIG.BENEFIT.POINT);
+              break;
+          }
+
+          benefits.splice(i, 1);
         }
       }
     }
@@ -904,7 +986,6 @@ export default function Game() {
     let shipDirectionFactor = "up";
 
     function simulateShipShake(deltaTime: number) {
-      // shaking up and down
       const speed = GAME_CONFIG.SHIP_SHAKE_SPEED * deltaTime;
 
       if (shipSprite.y > shipY + 5) {
@@ -958,11 +1039,21 @@ export default function Game() {
     }
 
     function handleShoot() {
-      if (
-        controller.state.autoShoot &&
-        Date.now() - lastShoot > GAME_CONFIG.SHOOT_DELAY
-      ) {
+      const shootDelay = rapidFireActive
+        ? GAME_CONFIG.SHOOT_DELAY / 3
+        : GAME_CONFIG.SHOOT_DELAY;
+
+      if (rapidFireActive && Date.now() > rapidFireEndTime) {
+        rapidFireActive = false;
+      }
+
+      if (controller.state.autoShoot && Date.now() - lastShoot > shootDelay) {
         shoot();
+
+        if (rapidFireActive) {
+          createParticles(shipSprite.x, shipSprite.y - 20, 0xff0000, 5);
+        }
+
         lastShoot = Date.now();
       }
     }
@@ -978,8 +1069,471 @@ export default function Game() {
       }
     }
 
-    async function gameOver() {
-      // TODO: save score
+    async function gameOver() {}
+
+    let activeShield = false;
+    let shieldSprite: Sprite | null = null;
+    let rapidFireActive = false;
+    let rapidFireEndTime = 0;
+    let comboCount = 0;
+    let comboTimer = 0;
+    let comboText: Text;
+    let screenShakeActive = false;
+    let screenShakeIntensity = 0;
+    let screenShakeDecay = 0;
+    let bossActive = false;
+    let bossSprite: Sprite | null = null;
+    let bossHealth = 0;
+    let bossHealthBar: Graphics | null = null;
+    let particleContainer = new Container();
+
+    function setupComboSystem() {
+      comboText = new Text("", {
+        fill: "yellow",
+        fontSize: 32,
+        fontFamily: "Joystix",
+        stroke: 0x000000,
+      });
+      comboText.anchor.set(0.5);
+      comboText.x = app.screen.width - 100;
+      comboText.y = 50;
+      comboText.visible = false;
+      app.stage.addChild(comboText);
+      app.stage.addChild(particleContainer);
+    }
+
+    function createShield() {
+      if (shieldSprite) {
+        app.stage.removeChild(shieldSprite);
+      }
+
+      shieldSprite = new Sprite(Texture.WHITE);
+      shieldSprite.width = shipSprite.width * 1.5;
+      shieldSprite.height = shipSprite.height * 1.5;
+      shieldSprite.anchor.set(0.5);
+      shieldSprite.tint = 0x00ffff;
+      shieldSprite.alpha = 0.5;
+      shieldSprite.filters = [
+        new GlowFilter({ color: 0x00ffff, distance: 15, quality: 0.5 }),
+      ];
+      app.stage.addChild(shieldSprite);
+
+      activeShield = true;
+
+      setTimeout(() => {
+        if (shieldSprite) {
+          gsap.to(shieldSprite, {
+            alpha: 0,
+            duration: 1,
+            onComplete: () => {
+              if (shieldSprite) {
+                app.stage.removeChild(shieldSprite);
+                shieldSprite = null;
+              }
+              activeShield = false;
+            },
+          });
+        }
+      }, 10000);
+    }
+
+    function activateBomb() {
+      screenShakeIntensity = 20;
+      screenShakeDecay = 0.9;
+      screenShakeActive = true;
+
+      const ring = new Graphics()
+        .circle(0, 0, 10)
+        .fill({ color: 0xff00ff, alpha: 0.7 });
+      ring.x = shipSprite.x;
+      ring.y = shipSprite.y;
+      ring.filters = [
+        new GlowFilter({ color: 0xff00ff, distance: 30, quality: 0.5 }),
+      ];
+      app.stage.addChild(ring);
+
+      gsap.to(ring.scale, {
+        x: 50,
+        y: 50,
+        duration: 1.5,
+        ease: "power2.out",
+        onComplete: () => {
+          app.stage.removeChild(ring);
+        },
+      });
+
+      gsap.to(ring, {
+        alpha: 0,
+        duration: 1.5,
+        ease: "power2.out",
+      });
+
+      for (let i = 0; i < enemies.length; i++) {
+        const enemy = enemies[i];
+        createExplosion(enemy.x, enemy.y);
+        app.stage.removeChild(enemy);
+        addScore(GAME_CONFIG.ENEMY.POINT, true);
+      }
+      enemies = [];
+
+      sound.play("explosion", {
+        volume: 0.3,
+      });
+    }
+
+    function activateRapidFire() {
+      rapidFireActive = true;
+      rapidFireEndTime = Date.now() + 5000;
+
+      const rapidFireText = new Text("RAPID FIRE!", {
+        fill: "red",
+        fontSize: 32,
+        fontFamily: "Joystix",
+        stroke: 0x000000,
+      });
+
+      rapidFireText.anchor.set(0.5);
+      rapidFireText.x = app.screen.width / 2;
+      rapidFireText.y = app.screen.height / 2 - 100;
+      app.stage.addChild(rapidFireText);
+
+      gsap.to(rapidFireText, {
+        alpha: 0,
+        y: rapidFireText.y - 50,
+        duration: 1,
+        onComplete: () => {
+          app.stage.removeChild(rapidFireText);
+        },
+      });
+    }
+
+    function addExtraLife() {
+      if (currentHeart < GAME_HEALTH) {
+        currentHeart++;
+        const heart = hearts[currentHeart - 1];
+        heart.visible = true;
+        heart.filters = [];
+
+        gsap.from(heart.scale, {
+          x: 2,
+          y: 2,
+          duration: 0.5,
+          ease: "elastic",
+        });
+
+        const lifeText = new Text("+1 LIFE!", {
+          fill: "green",
+          fontSize: 32,
+          fontFamily: "Joystix",
+          stroke: 0x000000,
+        });
+
+        lifeText.anchor.set(0.5);
+        lifeText.x = app.screen.width / 2;
+        lifeText.y = app.screen.height / 2 - 100;
+        app.stage.addChild(lifeText);
+
+        gsap.to(lifeText, {
+          alpha: 0,
+          y: lifeText.y - 50,
+          duration: 1,
+          onComplete: () => {
+            app.stage.removeChild(lifeText);
+          },
+        });
+      }
+    }
+
+    function createParticles(
+      x: number,
+      y: number,
+      color: number,
+      count: number
+    ) {
+      for (let i = 0; i < count; i++) {
+        const particle: any = new Graphics()
+          .circle(0, 0, 2 + Math.random() * 3)
+          .fill({ color });
+
+        particle.x = x;
+        particle.y = y;
+        particle.vx = (Math.random() - 0.5) * 5;
+        particle.vy = (Math.random() - 0.5) * 5;
+        particle.alpha = 0.7 + Math.random() * 0.3;
+        particle.life = 30 + Math.random() * 30;
+
+        particleContainer.addChild(particle);
+      }
+    }
+
+    function updateParticles(deltaTime: number) {
+      for (let i = particleContainer.children.length - 1; i >= 0; i--) {
+        const particle: any = particleContainer.children[i];
+
+        particle.x += particle.vx * deltaTime;
+        particle.y += particle.vy * deltaTime;
+        particle.life -= deltaTime;
+        particle.alpha = Math.max(0, particle.life / 60);
+
+        if (particle.life <= 0) {
+          particleContainer.removeChildAt(i);
+        }
+      }
+    }
+
+    function spawnBoss() {
+      if (bossActive) return;
+
+      bossActive = true;
+
+      const bossText = new Text("BOSS INCOMING!", {
+        fill: "red",
+        fontSize: 48,
+        fontFamily: "Joystix",
+        stroke: 0x000000,
+      });
+
+      bossText.anchor.set(0.5);
+      bossText.x = app.screen.width / 2;
+      bossText.y = app.screen.height / 2;
+      app.stage.addChild(bossText);
+
+      gsap.to(bossText.scale, {
+        x: 1.5,
+        y: 1.5,
+        duration: 1,
+        repeat: 1,
+        yoyo: true,
+        onComplete: () => {
+          app.stage.removeChild(bossText);
+          createBoss();
+        },
+      });
+    }
+
+    function createBoss() {
+      bossSprite = new Sprite(enemyTexture);
+      bossSprite.anchor.set(0.5);
+      constrainProportions(bossSprite, 300);
+      bossSprite.x = app.screen.width / 2;
+      bossSprite.y = -bossSprite.height;
+      bossSprite.tint = 0xff0000;
+
+      bossSprite.filters = [
+        new GlowFilter({ color: 0xff0000, distance: 20, quality: 0.5 }),
+        new RGBSplitFilter([5, 0], [0, 0], [-5, 0]),
+      ];
+
+      app.stage.addChild(bossSprite);
+
+      bossHealth = 100;
+      bossHealthBar = new Graphics();
+      updateBossHealthBar();
+      app.stage.addChild(bossHealthBar);
+
+      gsap.to(bossSprite, {
+        y: 150,
+        duration: 2,
+        ease: "bounce",
+      });
+    }
+
+    function updateBossHealthBar() {
+      if (!bossHealthBar || !bossSprite) return;
+
+      bossHealthBar.clear();
+
+      bossHealthBar.beginFill(0x333333);
+      bossHealthBar.drawRect(app.screen.width / 2 - 150, 50, 300, 20);
+      bossHealthBar.endFill();
+
+      bossHealthBar.beginFill(0xff0000);
+      bossHealthBar.drawRect(
+        app.screen.width / 2 - 150,
+        50,
+        300 * (bossHealth / 100),
+        20
+      );
+      bossHealthBar.endFill();
+    }
+
+    function updateBoss(deltaTime: number) {
+      if (!bossActive || !bossSprite) return;
+
+      const time = Date.now() / 1000;
+      const amplitude = 100;
+      const frequency = 0.5;
+
+      bossSprite.x =
+        app.screen.width / 2 + Math.sin(time * frequency) * amplitude;
+      bossSprite.y = 150 + (Math.sin(time * frequency * 2) * amplitude) / 2;
+
+      if (Math.random() < 0.05) {
+        shootBossProjectile();
+      }
+
+      if (Math.random() < 0.01) {
+        for (let i = 0; i < 3; i++) {
+          const enemy = spawnEnemy();
+          enemy.x = bossSprite.x;
+          enemy.y = bossSprite.y;
+          enemy.tint = 0xff0000;
+        }
+      }
+    }
+
+    function shootBossProjectile() {
+      if (!bossSprite) return;
+
+      const projectile: any = new Graphics().circle(0, 0, 10).fill(0xff0000);
+
+      projectile.x = bossSprite.x;
+      projectile.y = bossSprite.y;
+      projectile.filters = [
+        new GlowFilter({ color: 0xff0000, distance: 10, quality: 0.5 }),
+      ];
+
+      const dx = shipSprite.x - bossSprite.x;
+      const dy = shipSprite.y - bossSprite.y;
+      const length = Math.sqrt(dx * dx + dy * dy);
+
+      projectile.vx = (dx / length) * 5;
+      projectile.vy = (dy / length) * 5;
+      projectile.isBossProjectile = true;
+
+      app.stage.addChild(projectile);
+      enemies.push(projectile);
+    }
+
+    function damageBoss(damage: number) {
+      if (!bossActive || !bossSprite) return;
+
+      bossHealth -= damage;
+      updateBossHealthBar();
+
+      bossSprite.alpha = 0.5;
+      setTimeout(() => {
+        if (bossSprite) bossSprite.alpha = 1;
+      }, 100);
+
+      createParticles(bossSprite.x, bossSprite.y, 0xff0000, 10);
+
+      if (bossHealth <= 0) {
+        defeatBoss();
+      }
+    }
+
+    function defeatBoss() {
+      if (!bossSprite || !bossHealthBar) return;
+
+      for (let i = 0; i < 10; i++) {
+        setTimeout(() => {
+          if (bossSprite) {
+            const offsetX = (Math.random() - 0.5) * bossSprite.width;
+            const offsetY = (Math.random() - 0.5) * bossSprite.height;
+            createExplosion(bossSprite.x + offsetX, bossSprite.y + offsetY);
+          }
+        }, i * 200);
+      }
+
+      screenShakeIntensity = 30;
+      screenShakeDecay = 0.9;
+      screenShakeActive = true;
+
+      addScore(5000, true);
+
+      app.stage.removeChild(bossSprite);
+      app.stage.removeChild(bossHealthBar);
+      bossSprite = null;
+      bossHealthBar = null;
+      bossActive = false;
+
+      const victoryText = new Text("BOSS DEFEATED!", {
+        fill: "gold",
+        fontSize: 48,
+        fontFamily: "Joystix",
+        stroke: 0x000000,
+      });
+
+      victoryText.anchor.set(0.5);
+      victoryText.x = app.screen.width / 2;
+      victoryText.y = app.screen.height / 2;
+      app.stage.addChild(victoryText);
+
+      gsap.to(victoryText.scale, {
+        x: 1.5,
+        y: 1.5,
+        duration: 1,
+        repeat: 1,
+        yoyo: true,
+        onComplete: () => {
+          gsap.to(victoryText, {
+            alpha: 0,
+            duration: 1,
+            onComplete: () => {
+              app.stage.removeChild(victoryText);
+            },
+          });
+        },
+      });
+    }
+
+    function applyScreenShake() {
+      if (!screenShakeActive) return;
+
+      const shakeX = (Math.random() - 0.5) * screenShakeIntensity;
+      const shakeY = (Math.random() - 0.5) * screenShakeIntensity;
+
+      app.stage.x = shakeX;
+      app.stage.y = shakeY;
+
+      screenShakeIntensity *= screenShakeDecay;
+
+      if (screenShakeIntensity < 0.5) {
+        screenShakeActive = false;
+        app.stage.x = 0;
+        app.stage.y = 0;
+      }
+    }
+
+    function updateCombo(deltaTime: number) {
+      if (comboCount > 0) {
+        comboTimer -= deltaTime;
+
+        if (comboTimer <= 0) {
+          comboCount = 0;
+          comboText.visible = false;
+        }
+      }
+    }
+
+    function incrementCombo() {
+      if (!comboText) {
+        setupComboSystem();
+      }
+
+      comboCount++;
+      comboTimer = 120;
+
+      comboText.text = `${comboCount}x COMBO!`;
+      comboText.visible = true;
+
+      gsap.from(comboText.scale, {
+        x: 1.5,
+        y: 1.5,
+        duration: 0.3,
+        ease: "elastic",
+      });
+
+      if (comboCount >= 10) {
+        comboText.style.fill = "gold";
+      } else if (comboCount >= 5) {
+        comboText.style.fill = "orange";
+      } else {
+        comboText.style.fill = "yellow";
+      }
+
+      return Math.min(comboCount, 10);
     }
 
     app.ticker.add((time) => {
@@ -1019,6 +1573,15 @@ export default function Game() {
       handleSpawnEvents();
       handleShoot();
       handleSpeed();
+      updateParticles(time.deltaTime);
+      updateCombo(time.deltaTime);
+      updateBoss(time.deltaTime);
+      applyScreenShake();
+
+      if (activeShield && shieldSprite) {
+        shieldSprite.x = shipSprite.x;
+        shieldSprite.y = shipSprite.y;
+      }
     });
 
     app.ticker.add(
