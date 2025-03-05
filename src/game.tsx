@@ -75,7 +75,7 @@ function constrainProportions(sprite: any, size: number) {
   sprite.scale.set(scale);
 }
 
-export default function Game({ setPage }: any) {
+export default function Game() {
   async function setup() {
     const app = new Application({
       antialias: false,
@@ -356,7 +356,7 @@ export default function Game({ setPage }: any) {
     }
 
     function spawnBenefit() {
-      const benefit = new Sprite(coinTexture);
+      const benefit: any = new Sprite(coinTexture);
       const xPos = Math.random() * app.screen.width;
       benefit.anchor.set(0.5);
       const size = generateSize(
@@ -386,7 +386,7 @@ export default function Game({ setPage }: any) {
     let enemies: any[] = [];
 
     function spawnEnemy() {
-      const enemy = new Sprite(enemyTexture);
+      const enemy: any = new Sprite(enemyTexture);
       enemy.anchor.set(0.5);
 
       const size = generateSize(
